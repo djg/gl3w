@@ -67,7 +67,7 @@ gles3wInit()
 {
 ''')
     for proc in procs:
-        f.write('    %(p_s)-41s = (%(p_t)s) GLEW3W_IMPLEMENTATION("%(p)s");\n' % proc_t(proc))
+        f.write('    %(p_s)-41s = (%(p_t)s) GLES3W_IMPLEMENTATION("%(p)s");\n' % proc_t(proc))
     f.write(r'''}
 
 #endif // GLES3W_IMPLEMENTATION
