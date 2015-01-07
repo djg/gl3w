@@ -46,9 +46,6 @@ with open('include/GLES3/gles3w.h', 'wb') as f:
 extern "C" {
 #endif
 
-/* gles3w api */
-int gles3wInit(void);
-
 /* OpenGL|ES functions */
 ''')
     for proc in procs:
