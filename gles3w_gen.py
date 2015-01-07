@@ -4,210 +4,80 @@ import os
 import urllib2
 
 # Create directories
-if not os.path.exists('include/GL'):
-    os.makedirs('include/GL')
-if not os.path.exists('src'):
-    os.makedirs('src')
+if not os.path.exists('include/GLES3'):
+    os.makedirs('include/GLES3')
 
 # Download glcorearb.h
-if not os.path.exists('include/GL/glcorearb.h'):
-    print 'Downloading glcorearb.h to include/GL...'
-    web = urllib2.urlopen('http://www.opengl.org/registry/api/glcorearb.h')
-    with open('include/GL/glcorearb.h', 'wb') as f:
+if not os.path.exists('include/GLES3/gl3.h'):
+    print 'Downloading GL|ES 3 gl3.h to include/GLES3...'
+    web = urllib2.urlopen('https://www.khronos.org/registry/gles/api/GLES3/gl3.h')
+    with open('include/GLES3/gl3.h', 'wb') as f:
         f.writelines(web.readlines())
 else:
-    print 'Reusing glcorearb.h from include/GL...'
+    print 'Reusing gl3.h from include/GLES3...'
 
 # Parse function names from glcorearb.h
-print 'Parsing glcorearb.h header...'
+print 'Parsing gl3.h header...'
 procs = []
-p = re.compile(r'GLAPI.*APIENTRY\s+(\w+)')
-with open('include/GL/glcorearb.h', 'r') as f:
+p = re.compile(r'GL_APICALL\s+(.*)GL_APIENTRY\s+(\w+)\s+(.*);')
+with open('include/GLES3/gl3.h', 'r') as f:
     for line in f:
         m = p.match(line)
         if m:
-            procs.append(m.group(1))
+            a = m.group(1), m.group(2), m.group(3)
+            procs.append(a)
 
 def proc_t(proc):
-    return { 'p': proc,
-             'p_s': 'gl3w' + proc[2:],
-             'p_t': 'PFN' + proc.upper() + 'PROC' }
+    return { 'p': proc[1],
+             'p_a': proc[2],
+             'p_r': proc[0],
+             'p_s': 'gles3w' + proc[1][2:],
+             'p_t': 'PFN' + proc[1].upper() + 'PROC' }
 
 # Generate gl3w.h
-print 'Generating gl3w.h in include/GL...'
-with open('include/GL/gl3w.h', 'wb') as f:
-    f.write(r'''#ifndef __gl3w_h_
-#define __gl3w_h_
+print 'Generating gles3w.h in include/GLES3...'
+with open('include/GLES3/gles3w.h', 'wb') as f:
+    f.write(r'''#ifndef __gles3w_h_
+#define __gles3w_h_
 
-#include <GL/glcorearb.h>
-
-#ifndef __gl_h_
-#define __gl_h_
-#endif
+#include <GLES3/gl3.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef void (*GL3WglProc)(void);
+/* gles3w api */
+int gles3wInit(void);
 
-/* gl3w api */
-int gl3wInit(void);
-int gl3wIsSupported(int major, int minor);
-GL3WglProc gl3wGetProcAddress(const char *proc);
-
-/* OpenGL functions */
+/* OpenGL|ES functions */
 ''')
     for proc in procs:
-        f.write('extern %(p_t)s %(p_s)s;\n' % proc_t(proc))
+        pt = proc_t(proc);
+        f.write('typedef %(p_r)s(GL_APIENTRY* %(p_t)s) %(p_a)s;\n' % pt)
+        f.write('extern %(p_t)s %(p_s)s;\n' % pt)
     f.write('\n')
     for proc in procs:
-        f.write('#define %(p)s		%(p_s)s\n' % proc_t(proc))
+        f.write('#define %(p)-40s %(p_s)s\n' % proc_t(proc))
     f.write(r'''
+#ifdef GLES3W_IMPLEMENTATION
+
+''')
+    for proc in procs:
+        f.write('%(p_t)-44s %(p_s)s;\n' % proc_t(proc))
+    f.write(r'''
+static void
+gles3wInit()
+{
+''')
+    for proc in procs:
+        f.write('    %(p_s)-41s = (%(p_t)s) GLEW3W_IMPLEMENTATION("%(p)s");\n' % proc_t(proc))
+    f.write(r'''}
+
+#endif // GLES3W_IMPLEMENTATION
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif
 ''')
-
-# Generate gl3w.c
-print 'Generating gl3w.c in src...'
-with open('src/gl3w.c', 'wb') as f:
-    f.write(r'''#include <GL/gl3w.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN 1
-#include <windows.h>
-
-static HMODULE libgl;
-
-static void open_libgl(void)
-{
-	libgl = LoadLibraryA("opengl32.dll");
-}
-
-static void close_libgl(void)
-{
-	FreeLibrary(libgl);
-}
-
-static GL3WglProc get_proc(const char *proc)
-{
-	GL3WglProc res;
-
-	res = (GL3WglProc) wglGetProcAddress(proc);
-	if (!res)
-		res = (GL3WglProc) GetProcAddress(libgl, proc);
-	return res;
-}
-#elif defined(__APPLE__) || defined(__APPLE_CC__)
-#include <Carbon/Carbon.h>
-
-CFBundleRef bundle;
-CFURLRef bundleURL;
-
-static void open_libgl(void)
-{
-	bundleURL = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
-		CFSTR("/System/Library/Frameworks/OpenGL.framework"),
-		kCFURLPOSIXPathStyle, true);
-
-	bundle = CFBundleCreate(kCFAllocatorDefault, bundleURL);
-	assert(bundle != NULL);
-}
-
-static void close_libgl(void)
-{
-	CFRelease(bundle);
-	CFRelease(bundleURL);
-}
-
-static GL3WglProc get_proc(const char *proc)
-{
-	GL3WglProc res;
-
-	CFStringRef procname = CFStringCreateWithCString(kCFAllocatorDefault, proc,
-		kCFStringEncodingASCII);
-	res = (GL3WglProc) CFBundleGetFunctionPointerForName(bundle, procname);
-	CFRelease(procname);
-	return res;
-}
-#else
-#include <dlfcn.h>
-#include <GL/glx.h>
-
-static void *libgl;
-
-static void open_libgl(void)
-{
-	libgl = dlopen("libGL.so.1", RTLD_LAZY | RTLD_GLOBAL);
-}
-
-static void close_libgl(void)
-{
-	dlclose(libgl);
-}
-
-static GL3WglProc get_proc(const char *proc)
-{
-	GL3WglProc res;
-
-	res = (GL3WglProc) glXGetProcAddress((const GLubyte *) proc);
-	if (!res)
-		res = (GL3WglProc) dlsym(libgl, proc);
-	return res;
-}
-#endif
-
-static struct {
-	int major, minor;
-} version;
-
-static int parse_version(void)
-{
-	if (!glGetIntegerv)
-		return -1;
-
-	glGetIntegerv(GL_MAJOR_VERSION, &version.major);
-	glGetIntegerv(GL_MINOR_VERSION, &version.minor);
-
-	if (version.major < 3)
-		return -1;
-	return 0;
-}
-
-static void load_procs(void);
-
-int gl3wInit(void)
-{
-	open_libgl();
-	load_procs();
-	close_libgl();
-	return parse_version();
-}
-
-int gl3wIsSupported(int major, int minor)
-{
-	if (major < 3)
-		return 0;
-	if (version.major == major)
-		return version.minor >= minor;
-	return version.major >= major;
-}
-
-GL3WglProc gl3wGetProcAddress(const char *proc)
-{
-	return get_proc(proc);
-}
-
-''')
-    for proc in procs:
-        f.write('%(p_t)s %(p_s)s;\n' % proc_t(proc))
-    f.write(r'''
-static void load_procs(void)
-{
-''')
-    for proc in procs:
-        f.write('\t%(p_s)s = (%(p_t)s) get_proc("%(p)s");\n' % proc_t(proc))
-    f.write('}\n')
